@@ -131,6 +131,7 @@ def _walk_first(docs, out, seen, next_urls):
     """First page: Play mixes extra clusters (promos, 'you might also like') into the response
     on some sessions. Keep only the featured exact-match card and the paginated results list."""
     clusters = []
+    all_next = []
 
     def collect(node):
         if isinstance(node, list):
@@ -141,8 +142,11 @@ def _walk_first(docs, out, seen, next_urls):
             return
         apps = [c for c in node.get("subItem") or [] if _is_app(c)]
         cm = node.get("containerMetadata") or {}
+        nxt = cm.get("nextPageUrl") if isinstance(cm, dict) else None
+        if nxt and nxt not in all_next:
+            all_next.append(nxt)
         if apps:
-            clusters.append({"apps": apps, "next": cm.get("nextPageUrl") if isinstance(cm, dict) else None})
+            clusters.append({"apps": apps, "next": nxt})
         for c in node.get("subItem") or []:
             if not _is_app(c):
                 collect(c)
@@ -160,7 +164,7 @@ def _walk_first(docs, out, seen, next_urls):
             if pkg and pkg not in seen and a.get("title"):
                 seen.add(pkg)
                 out.append(_norm(a, a["details"]["appDetails"]))
-    next_urls.append(main["next"])
+    next_urls.extend(all_next)
 
 
 def _int(v):
@@ -240,8 +244,13 @@ def _web_order(term, locale, host=None):
             lang = locale.split("_")[0].lower()
             country = (locale.split("_")[-1] if "_" in locale else "US").lower()
             r = _rq.get("https://" + host + "/api/search", params={"term": term, "country": country, "lang": lang, "num": 50},
-                        timeout=25)
-            j = r.json()
+                        timeout=25, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0",
+                                             "Accept": "application/json"})
+            try:
+                j = r.json()
+            except Exception:
+                WEB_NOTE["note"] += " node-http:" + str(r.status_code) + " " + r.text[:60].replace("\n", " ")
+                return []
             ids = [x.get("appId") for x in j.get("results", []) if x.get("appId")]
             WEB_NOTE["note"] += " node:" + str(len(ids)) + (" err=" + str(j.get("error"))[:80] if j.get("error") else "")
             return ids
@@ -268,6 +277,7 @@ def _web_order_direct(term, locale):
             WEB_NOTE["note"] = "direct-http:" + str(r.status_code)
             return []
         html = r.text
+        WEB_NOTE["note"] = "direct-len:" + str(len(html))
         m = re.search(r"AF_initDataCallback\(\{key: 'ds:4'.*?data:(.*?), sideChannel:", html, re.S)
         blob = m.group(1) if m else html
         seen, order = set(), []
