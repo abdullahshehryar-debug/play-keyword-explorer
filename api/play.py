@@ -247,10 +247,29 @@ def _first_page(api, term, qs):
 WEB_NOTE = {"note": ""}
 
 
+def _web_order_stable(term, locale):
+    """Google occasionally serves an experiment variant of the search page (different length
+    and order). Fetch twice in parallel; on disagreement fetch a third time and take the
+    majority, so one odd variant cannot shift the ranks."""
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        a, b = list(ex.map(lambda _: _web_order_direct(term, locale), range(2)))
+    if a == b:
+        WEB_NOTE["note"] = "direct:" + str(len(a)) + " x2"
+        return a
+    c = _web_order_direct(term, locale)
+    for cand in (a, b):
+        if cand == c:
+            WEB_NOTE["note"] = "direct:" + str(len(c)) + " majority"
+            return c
+    pick = next((x for x in (a, b, c) if x), [])
+    WEB_NOTE["note"] = "direct:" + str(len(pick)) + " split"
+    return pick
+
+
 def _web_order(term, locale, host=None):
-    ids = _web_order_direct(term, locale)
+    ids = _web_order_stable(term, locale)
     if ids:
-        WEB_NOTE["note"] = "direct:" + str(len(ids))
         return ids
     if host:
         try:
@@ -397,7 +416,7 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Cache-Control", "s-maxage=600, stale-while-revalidate=1800")
+        self.send_header("Cache-Control", "s-maxage=120, stale-while-revalidate=300")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
