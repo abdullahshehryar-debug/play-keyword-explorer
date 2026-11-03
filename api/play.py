@@ -19,10 +19,10 @@ _API = {"obj": None, "locale": None, "ts": 0}
 _TOKEN_TTL = 50 * 60  # re-login after 50 minutes
 
 
-def _get_api(locale):
+def _get_api(locale, force=False):
     from playstoreapi.googleplay import GooglePlayAPI
     now = time.time()
-    if _API["obj"] is not None and _API["locale"] == locale and now - _API["ts"] < _TOKEN_TTL:
+    if not force and _API["obj"] is not None and _API["locale"] == locale and now - _API["ts"] < _TOKEN_TTL:
         return _API["obj"]
     api = GooglePlayAPI(locale=locale, timezone="America/New_York")
     gsf = os.environ.get("PLAYSTORE_GSFID")
@@ -156,11 +156,23 @@ def _first_page(api, term, qs):
     return list(map(_u.parseProtobufObj, resp.payload.listResponse.item))
 
 
+def _is_rate_limit(e):
+    return "429" in str(e) or "Too Many" in str(e)
+
+
 def run_search(term, num, locale, debug=False, qs=""):
     api = _get_api(locale)
     out, seen, raw_pages = [], set(), 0
     next_urls = []
-    pages = _first_page(api, term, qs)
+    relogins = 0
+    try:
+        pages = _first_page(api, term, qs)
+    except Exception as e:
+        if not _is_rate_limit(e):
+            raise
+        api = _get_api(locale, force=True)
+        relogins += 1
+        pages = _first_page(api, term, qs)
     raw_first = pages
     _walk(pages, out, seen, next_urls)
     raw_pages += 1
@@ -172,10 +184,23 @@ def run_search(term, num, locale, debug=False, qs=""):
         visited.add(url)
         try:
             page = api.search(nextPageUrl=url)
-        except Exception as e:  # keep what we have
-            if debug:
-                out.append({"_pageError": str(e)})
-            break
+        except Exception as e:
+            if _is_rate_limit(e) and relogins < 3:
+                # Google throttled this anonymous session: get a fresh one and retry the page
+                try:
+                    api = _get_api(locale, force=True)
+                    relogins += 1
+                    time.sleep(0.5)
+                    page = api.search(nextPageUrl=url)
+                except Exception as e2:
+                    if debug:
+                        out.append({"_pageError": str(e2)})
+                    break
+            else:
+                if debug:
+                    out.append({"_pageError": str(e)})
+                break
+        time.sleep(0.12)
         before = len(out)
         _walk(page, out, seen, next_urls)
         raw_pages += 1
@@ -184,7 +209,7 @@ def run_search(term, num, locale, debug=False, qs=""):
     result = out[:num]
     for i, r in enumerate(result):
         r["rank"] = i + 1
-    resp = {"term": term, "locale": locale, "count": len(result), "pagesFetched": raw_pages,
+    resp = {"term": term, "locale": locale, "count": len(result), "pagesFetched": raw_pages, "relogins": relogins,
             "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "results": result}
     if debug:
         resp["debugFirstPage"] = json.loads(json.dumps(raw_first, default=str))[:1]
