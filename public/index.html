@@ -239,7 +239,7 @@ footer{color:var(--muted);font-size:12px;padding-block:14px;line-height:1.6}
       let d=null, src='';
       try{
         const r=await fetch('/api/play?term='+encodeURIComponent(t)+'&num=250&locale='+l+'_'+c.toUpperCase());
-        const j=await r.json(); if(r.ok&&!j.error&&(j.results||[]).length) {d=j; src='Play Store API · '+j.pagesFetched+' pages';}
+        const j=await r.json(); if(r.ok&&!j.error&&(j.results||[]).length) {d=j; src='ranks 1–'+(j.webVerified||0)+' = Play web order, rest from Play app feed · '+j.pagesFetched+' pages';}
         else throw new Error(j.error||('HTTP '+r.status));
       }catch(e1){
         const r=await fetch('/api/search?term='+encodeURIComponent(t)+'&country='+c+'&lang='+l+'&num=200');
