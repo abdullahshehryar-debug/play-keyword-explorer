@@ -123,6 +123,46 @@ def _walk(node, out, seen, next_urls):
         _walk(child, out, seen, next_urls)
 
 
+def _is_app(n):
+    return isinstance(n, dict) and isinstance(n.get("details"), dict) and n["details"].get("appDetails") is not None
+
+
+def _walk_first(docs, out, seen, next_urls):
+    """First page: Play mixes extra clusters (promos, 'you might also like') into the response
+    on some sessions. Keep only the featured exact-match card and the paginated results list."""
+    clusters = []
+
+    def collect(node):
+        if isinstance(node, list):
+            for x in node:
+                collect(x)
+            return
+        if not isinstance(node, dict):
+            return
+        apps = [c for c in node.get("subItem") or [] if _is_app(c)]
+        cm = node.get("containerMetadata") or {}
+        if apps:
+            clusters.append({"apps": apps, "next": cm.get("nextPageUrl") if isinstance(cm, dict) else None})
+        for c in node.get("subItem") or []:
+            if not _is_app(c):
+                collect(c)
+
+    collect(docs)
+    main = next((c for c in clusters if c["next"]), None)
+    if main is None:
+        _walk(docs, out, seen, next_urls)  # unknown layout: fall back to everything
+        return
+    before = [c for c in clusters[:clusters.index(main)] if len(c["apps"]) == 1]
+    featured = before[-1:]  # the exact-match card sits right above the results list
+    for c in featured + [main]:
+        for a in c["apps"]:
+            pkg = a.get("id") or ""
+            if pkg and pkg not in seen and a.get("title"):
+                seen.add(pkg)
+                out.append(_norm(a, a["details"]["appDetails"]))
+    next_urls.append(main["next"])
+
+
 def _int(v):
     try:
         return int(v) if v is not None else None
@@ -186,7 +226,31 @@ def _first_page(api, term, qs):
     return list(map(_u.parseProtobufObj, resp.payload.listResponse.item))
 
 
-def _web_order(term, locale):
+WEB_NOTE = {"note": ""}
+
+
+def _web_order(term, locale, host=None):
+    ids = _web_order_direct(term, locale)
+    if ids:
+        WEB_NOTE["note"] = "direct:" + str(len(ids))
+        return ids
+    if host:
+        try:
+            import requests as _rq
+            lang = locale.split("_")[0].lower()
+            country = (locale.split("_")[-1] if "_" in locale else "US").lower()
+            r = _rq.get("https://" + host + "/api/search", params={"term": term, "country": country, "lang": lang, "num": 50},
+                        timeout=25)
+            j = r.json()
+            ids = [x.get("appId") for x in j.get("results", []) if x.get("appId")]
+            WEB_NOTE["note"] += " node:" + str(len(ids)) + (" err=" + str(j.get("error"))[:80] if j.get("error") else "")
+            return ids
+        except Exception as e:  # noqa: BLE001
+            WEB_NOTE["note"] += " node-exc:" + str(e)[:80]
+    return []
+
+
+def _web_order_direct(term, locale):
     """Order of the public play.google.com search page (what users and ASO tools see).
     Returns a list of package names in display order (featured card first), or []."""
     import re
@@ -201,6 +265,7 @@ def _web_order(term, locale):
                           "Chrome/124.0 Safari/537.36",
             "Accept-Language": lang + "," + lang + "-" + country.upper() + ";q=0.9"})
         if r.status_code != 200:
+            WEB_NOTE["note"] = "direct-http:" + str(r.status_code)
             return []
         html = r.text
         m = re.search(r"AF_initDataCallback\(\{key: 'ds:4'.*?data:(.*?), sideChannel:", html, re.S)
@@ -211,7 +276,8 @@ def _web_order(term, locale):
                 seen.add(pkg)
                 order.append(pkg)
         return order
-    except Exception:
+    except Exception as e:  # noqa: BLE001
+        WEB_NOTE["note"] = "direct-exc:" + str(e)[:80]
         return []
 
 
@@ -219,7 +285,7 @@ def _is_rate_limit(e):
     return "429" in str(e) or "Too Many" in str(e)
 
 
-def run_search(term, num, locale, debug=False, qs=""):
+def run_search(term, num, locale, debug=False, qs="", host=None):
     api = _get_api(locale)
     out, seen, raw_pages = [], set(), 0
     next_urls = []
@@ -233,7 +299,7 @@ def run_search(term, num, locale, debug=False, qs=""):
         relogins += 1
         pages = _first_page(api, term, qs)
     raw_first = pages
-    _walk(pages, out, seen, next_urls)
+    _walk_first(pages, out, seen, next_urls)
     raw_pages += 1
     visited = set()
     while len(out) < num and next_urls and raw_pages < 60:
@@ -267,7 +333,8 @@ def run_search(term, num, locale, debug=False, qs=""):
             break
     # Align the head of the list with the public Play web search order (the ranking users
     # and ASO tools see); the mobile feed supplies the long tail and all metadata.
-    web_ids = _web_order(term, locale)
+    WEB_NOTE["note"] = ""
+    web_ids = _web_order(term, locale, host)
     by_id = {r["appId"]: r for r in out}
     merged, used = [], set()
     for pkg in web_ids:
@@ -293,7 +360,7 @@ def run_search(term, num, locale, debug=False, qs=""):
     for i, r in enumerate(result):
         r["rank"] = i + 1
     resp = {"term": term, "locale": locale, "count": len(result), "pagesFetched": raw_pages, "relogins": relogins,
-            "webVerified": len([r for r in result if r.get("rankSource") == "web"]),
+            "webVerified": len([r for r in result if r.get("rankSource") == "web"]), "webNote": WEB_NOTE["note"],
             "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "results": result}
     if debug:
         resp["debugFirstPage"] = json.loads(json.dumps(raw_first, default=str))[:1]
@@ -328,7 +395,8 @@ class handler(BaseHTTPRequestHandler):
         if not all(ch.isalnum() or ch in "=&_" for ch in qs) or len(qs) > 60:
             qs = ""
         try:
-            self._send(200, run_search(term, num, locale, debug, qs))
+            host = self.headers.get("x-forwarded-host") or self.headers.get("host")
+            self._send(200, run_search(term, num, locale, debug, qs, host))
         except Exception as e:
             _API["obj"] = None  # force re-login next time
             self._send(502, {"error": "Play Store API failed: " + str(e),
