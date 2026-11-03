@@ -1,0 +1,169 @@
+"""
+Google Play keyword search via the Play Store mobile API (the same API the
+Play Store Android app uses). Anonymous session tokens come from the Aurora
+Store token dispenser, so no Google account is needed. Pages are followed
+through nextPageUrl until `num` apps are collected (Play serves ~250 max).
+
+GET /api/play?term=screen+mirroring&num=250&locale=en_US&debug=0
+"""
+import json
+import os
+import time
+import traceback
+from http.server import BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+
+_API = {"obj": None, "locale": None, "ts": 0}
+_TOKEN_TTL = 50 * 60  # re-login after 50 minutes
+
+
+def _get_api(locale):
+    from playstoreapi.googleplay import GooglePlayAPI
+    now = time.time()
+    if _API["obj"] is not None and _API["locale"] == locale and now - _API["ts"] < _TOKEN_TTL:
+        return _API["obj"]
+    api = GooglePlayAPI(locale=locale, timezone="America/New_York")
+    gsf = os.environ.get("PLAYSTORE_GSFID")
+    tok = os.environ.get("PLAYSTORE_TOKEN")
+    dispenser = os.environ.get("PLAYSTORE_DISPENSER_URL") or "https://auroraoss.com/api/auth"
+    if gsf and tok:
+        api.login(gsfId=int(gsf), authSubToken=tok, check=False)
+    else:
+        api.login(anonymous=True, tokenDispenser=dispenser)
+    _API.update(obj=api, locale=locale, ts=now)
+    return api
+
+
+def _walk(node, out, seen, next_urls):
+    """Collect app items and nextPageUrls from a parsed search response."""
+    if isinstance(node, list):
+        for x in node:
+            _walk(x, out, seen, next_urls)
+        return
+    if not isinstance(node, dict):
+        return
+    cm = node.get("containerMetadata")
+    if isinstance(cm, dict) and cm.get("nextPageUrl"):
+        next_urls.append(cm["nextPageUrl"])
+    pkg = node.get("id") or ""
+    details = node.get("details") or {}
+    app = details.get("appDetails") if isinstance(details, dict) else None
+    if app is not None and pkg and pkg not in seen and node.get("title"):
+        seen.add(pkg)
+        out.append(_norm(node, app))
+    for child in node.get("subItem") or []:
+        _walk(child, out, seen, next_urls)
+
+
+def _norm(item, app):
+    rating = item.get("aggregateRating") or {}
+    offers = item.get("offer") or []
+    offer = offers[0] if offers else {}
+    icon = ""
+    for im in item.get("image") or []:
+        if im.get("imageType") == 4 and im.get("imageUrl"):
+            icon = im["imageUrl"]
+            break
+    if not icon:
+        for im in item.get("image") or []:
+            if im.get("imageUrl"):
+                icon = im["imageUrl"]
+                break
+    micros = offer.get("micros")
+    try:
+        price = (int(micros) / 1e6) if micros is not None else None
+    except (TypeError, ValueError):
+        price = None
+    return {
+        "appId": item.get("id"),
+        "title": item.get("title", ""),
+        "developer": app.get("developerName") or item.get("creator", ""),
+        "icon": icon,
+        "url": "https://play.google.com/store/apps/details?id=" + str(item.get("id")),
+        "score": rating.get("starRating"),
+        "ratings": rating.get("ratingsCount"),
+        "ratingsText": rating.get("ratingCountLabelAbbreviated") or rating.get("ratingCountLabel") or "",
+        "price": price,
+        "currency": offer.get("currencyCode", ""),
+        "free": (price == 0) if price is not None else None,
+        "priceText": offer.get("formattedAmount", ""),
+        "installs": app.get("downloadLabelDisplay") or app.get("downloadLabel") or app.get("installNotes") or "",
+        "installsAbbrev": app.get("downloadLabelAbbreviated") or "",
+        "downloadCount": app.get("downloadCount"),
+        "genre": app.get("categoryName") or "",
+        "genreId": app.get("appCategory", [None])[0] if isinstance(app.get("appCategory"), list) else app.get("appCategory"),
+        "version": app.get("versionString", ""),
+        "updated": app.get("infoUpdatedOn", ""),
+        "contentRating": app.get("contentRating", ""),
+        "offersIAP": app.get("inAppProduct", ""),
+        "summary": item.get("promotionalDescription", "") or "",
+    }
+
+
+def run_search(term, num, locale, debug=False):
+    api = _get_api(locale)
+    out, seen, raw_pages = [], set(), 0
+    next_urls = []
+    pages = api.search(term)
+    raw_first = pages
+    _walk(pages, out, seen, next_urls)
+    raw_pages += 1
+    visited = set()
+    while len(out) < num and next_urls and raw_pages < 20:
+        url = next_urls.pop(0)
+        if url in visited:
+            continue
+        visited.add(url)
+        try:
+            page = api.search(nextPageUrl=url)
+        except Exception as e:  # keep what we have
+            if debug:
+                out.append({"_pageError": str(e)})
+            break
+        before = len(out)
+        _walk(page, out, seen, next_urls)
+        raw_pages += 1
+        if len(out) == before and not next_urls:
+            break
+    result = out[:num]
+    for i, r in enumerate(result):
+        r["rank"] = i + 1
+    resp = {"term": term, "locale": locale, "count": len(result), "pagesFetched": raw_pages,
+            "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "results": result}
+    if debug:
+        resp["debugFirstPage"] = json.loads(json.dumps(raw_first, default=str))[:1]
+    return resp
+
+
+class handler(BaseHTTPRequestHandler):
+    def _send(self, code, obj):
+        body = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "s-maxage=600, stale-while-revalidate=1800")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        q = parse_qs(urlparse(self.path).query)
+        term = (q.get("term", [""])[0] or "").strip()
+        if not term:
+            return self._send(400, {"error": "term is required"})
+        try:
+            num = max(1, min(int(q.get("num", ["250"])[0]), 250))
+        except ValueError:
+            num = 250
+        locale = q.get("locale", ["en_US"])[0]
+        if not all(ch.isalnum() or ch == "_" for ch in locale) or len(locale) > 6:
+            locale = "en_US"
+        debug = q.get("debug", ["0"])[0] == "1"
+        try:
+            self._send(200, run_search(term, num, locale, debug))
+        except Exception as e:
+            _API["obj"] = None  # force re-login next time
+            self._send(502, {"error": "Play Store API failed: " + str(e),
+                             "trace": traceback.format_exc()[-1500:] if debug else None})
