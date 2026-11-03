@@ -93,6 +93,13 @@ def _walk(node, out, seen, next_urls):
         _walk(child, out, seen, next_urls)
 
 
+def _int(v):
+    try:
+        return int(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _norm(item, app):
     rating = item.get("aggregateRating") or {}
     offers = item.get("offer") or []
@@ -119,7 +126,7 @@ def _norm(item, app):
         "icon": icon,
         "url": "https://play.google.com/store/apps/details?id=" + str(item.get("id")),
         "score": rating.get("starRating"),
-        "ratings": rating.get("ratingsCount"),
+        "ratings": _int(rating.get("ratingsCount")),
         "ratingsText": rating.get("ratingCountLabelAbbreviated") or rating.get("ratingCountLabel") or "",
         "price": price,
         "currency": offer.get("currencyCode", ""),
@@ -147,7 +154,7 @@ def run_search(term, num, locale, debug=False):
     _walk(pages, out, seen, next_urls)
     raw_pages += 1
     visited = set()
-    while len(out) < num and next_urls and raw_pages < 20:
+    while len(out) < num and next_urls and raw_pages < 60:
         url = next_urls.pop(0)
         if url in visited:
             continue
