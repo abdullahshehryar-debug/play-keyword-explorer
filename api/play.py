@@ -110,6 +110,8 @@ def _walk(node, out, seen, next_urls):
         return
     if not isinstance(node, dict):
         return
+    if _is_promo_cluster(node):
+        return  # "You might also like" etc.: not search results, and never follow its pages
     cm = node.get("containerMetadata")
     if isinstance(cm, dict) and cm.get("nextPageUrl"):
         next_urls.append(cm["nextPageUrl"])
@@ -127,6 +129,16 @@ def _is_app(n):
     return isinstance(n, dict) and isinstance(n.get("details"), dict) and n["details"].get("appDetails") is not None
 
 
+def _is_promo_cluster(n):
+    """A titled cluster of apps ("You might also like", "Similar apps", ...) is a recommendation
+    rail, not part of the ranked search list. The real results cluster has no title."""
+    if not isinstance(n, dict) or _is_app(n):
+        return False
+    if not (n.get("title") or "").strip():
+        return False
+    return any(_is_app(c) for c in n.get("subItem") or [])
+
+
 def _walk_first(docs, out, seen, next_urls):
     """First page: Play mixes extra clusters (promos, 'you might also like') into the response
     on some sessions. Keep only the featured exact-match card and the paginated results list."""
@@ -139,6 +151,8 @@ def _walk_first(docs, out, seen, next_urls):
                 collect(x)
             return
         if not isinstance(node, dict):
+            return
+        if _is_promo_cluster(node):
             return
         apps = [c for c in node.get("subItem") or [] if _is_app(c)]
         cm = node.get("containerMetadata") or {}
