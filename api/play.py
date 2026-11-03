@@ -27,13 +27,49 @@ def _get_api(locale):
     api = GooglePlayAPI(locale=locale, timezone="America/New_York")
     gsf = os.environ.get("PLAYSTORE_GSFID")
     tok = os.environ.get("PLAYSTORE_TOKEN")
-    dispenser = os.environ.get("PLAYSTORE_DISPENSER_URL") or "https://auroraoss.com/api/auth"
     if gsf and tok:
         api.login(gsfId=int(gsf), authSubToken=tok, check=False)
     else:
-        api.login(anonymous=True, tokenDispenser=dispenser)
+        _anon_login(api)
     _API.update(obj=api, locale=locale, ts=now)
     return api
+
+
+DISPENSERS = [d for d in [os.environ.get("PLAYSTORE_DISPENSER_URL"),
+                          "https://auroraoss.com/api/auth",
+                          "https://auroraoss.com/api/auth/",
+                          "http://goolag.store:1337/api/auth"] if d]
+
+UA_VARIANTS = [
+    "com.aurora.store-4.7.2-66",
+    "Aurora Store 4.7.2 (Android 13; Pixel 3a)",
+    "okhttp/4.12.0",
+]
+
+
+def _anon_login(api):
+    """Ask an Aurora token dispenser for an anonymous Play Store session.
+    Tries several dispensers / user agents because some block generic clients."""
+    import requests
+    device = api.deviceBuilder.device_case_preserved
+    errors = []
+    for url in DISPENSERS:
+        for ua in UA_VARIANTS:
+            try:
+                r = requests.post(url, json=device, timeout=25,
+                                  headers={"User-Agent": ua, "Content-Type": "application/json",
+                                           "Accept": "application/json"})
+                if r.status_code != 200:
+                    errors.append(f"{url} [{ua}] -> {r.status_code} {r.text[:120]!r}")
+                    continue
+                j = r.json()
+                api.login(gsfId=int(j["gsfId"], 16), authSubToken=j["authToken"], check=False)
+                api.device_config_token = j.get("deviceConfigToken") or None
+                api.deviceCheckinConsistencyToken = j.get("deviceCheckInConsistencyToken") or None
+                return api
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{url} [{ua}] -> {type(e).__name__}: {str(e)[:120]}")
+    raise RuntimeError("No token dispenser answered: " + " | ".join(errors))
 
 
 def _walk(node, out, seen, next_urls):
