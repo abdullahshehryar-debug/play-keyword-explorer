@@ -186,6 +186,35 @@ def _first_page(api, term, qs):
     return list(map(_u.parseProtobufObj, resp.payload.listResponse.item))
 
 
+def _web_order(term, locale):
+    """Order of the public play.google.com search page (what users and ASO tools see).
+    Returns a list of package names in display order (featured card first), or []."""
+    import re
+    import requests as _rq
+    lang = locale.split("_")[0].lower() if locale else "en"
+    country = (locale.split("_")[-1] if "_" in locale else "US").lower()
+    url = ("https://play.google.com/store/search?q=" + _rq.utils.quote(term) +
+           "&c=apps&hl=" + lang + "&gl=" + country)
+    try:
+        r = _rq.get(url, timeout=15, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/124.0 Safari/537.36",
+            "Accept-Language": lang + "," + lang + "-" + country.upper() + ";q=0.9"})
+        if r.status_code != 200:
+            return []
+        html = r.text
+        m = re.search(r"AF_initDataCallback\(\{key: 'ds:4'.*?data:(.*?), sideChannel:", html, re.S)
+        blob = m.group(1) if m else html
+        seen, order = set(), []
+        for pkg in re.findall(r"/store/apps/details\?id=([A-Za-z0-9_.]+)", blob):
+            if pkg not in seen:
+                seen.add(pkg)
+                order.append(pkg)
+        return order
+    except Exception:
+        return []
+
+
 def _is_rate_limit(e):
     return "429" in str(e) or "Too Many" in str(e)
 
@@ -236,10 +265,35 @@ def run_search(term, num, locale, debug=False, qs=""):
         raw_pages += 1
         if len(out) == before and not next_urls:
             break
-    result = out[:num]
+    # Align the head of the list with the public Play web search order (the ranking users
+    # and ASO tools see); the mobile feed supplies the long tail and all metadata.
+    web_ids = _web_order(term, locale)
+    by_id = {r["appId"]: r for r in out}
+    merged, used = [], set()
+    for pkg in web_ids:
+        r = by_id.get(pkg)
+        if r is None:
+            try:
+                item = api.details(pkg)
+                app = (item.get("details") or {}).get("appDetails")
+                if app is not None:
+                    r = _norm(item, app)
+            except Exception:
+                r = None
+        if r is not None and pkg not in used:
+            r["rankSource"] = "web"
+            merged.append(r)
+            used.add(pkg)
+    for r in out:
+        if r["appId"] not in used:
+            r["rankSource"] = "api"
+            merged.append(r)
+            used.add(r["appId"])
+    result = merged[:num]
     for i, r in enumerate(result):
         r["rank"] = i + 1
     resp = {"term": term, "locale": locale, "count": len(result), "pagesFetched": raw_pages, "relogins": relogins,
+            "webVerified": len([r for r in result if r.get("rankSource") == "web"]),
             "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "results": result}
     if debug:
         resp["debugFirstPage"] = json.loads(json.dumps(raw_first, default=str))[:1]
