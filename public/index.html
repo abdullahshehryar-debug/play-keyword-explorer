@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Play Keyword Explorer</title>
+<meta name="description" content="Type a keyword and see the top 200 Google Play search results for any country, live.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: sticky command bar (keyword + country) over one dense, sortable rank table. */
+:root{
+  --bg:#f5f7f6; --panel:#ffffff; --fg:#161a18; --muted:#5d6763; --line:#dce2de;
+  --accent:#01875f; --accent-fg:#ffffff; --hit:#fff2b3; --good:#1b7f4b; --warn:#b4530a; --bad:#b3261e;
+  --font:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#111614; --panel:#1a211e; --fg:#e9eeeb; --muted:#97a39d; --line:#2b3531;
+  --accent:#4fcf9a; --accent-fg:#06211a; --hit:#5a4b0a; --good:#5ec98a; --warn:#f2a35c; --bad:#f28b82; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#111614; --panel:#1a211e; --fg:#e9eeeb; --muted:#97a39d; --line:#2b3531;
+  --accent:#4fcf9a; --accent-fg:#06211a; --hit:#5a4b0a; --good:#5ec98a; --warn:#f2a35c; --bad:#f28b82; color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+button,input,select{font:inherit;color:inherit}
+a{color:var(--accent)}
+.wrap{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 32px;max-width:1320px;margin:0 auto}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;padding-block:20px 12px}
+header h1{font-size:20px;font-weight:600;margin:0;letter-spacing:-.01em}
+header .sub{color:var(--muted)}
+form.bar{display:grid;grid-template-columns:minmax(220px,1fr) 170px 120px auto;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;position:sticky;top:env(safe-area-inset-top,0px);z-index:5}
+.bar input,.bar select{height:40px;border:1px solid var(--line);border-radius:7px;padding:0 12px;background:var(--bg);min-width:0}
+.bar input:focus,.bar select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.bar button{height:40px;padding:0 18px;border:0;border-radius:7px;background:var(--accent);color:var(--accent-fg);font-weight:600;cursor:pointer}
+button:disabled{opacity:.6;cursor:progress}
+.status{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;padding-block:12px;color:var(--muted);min-height:44px}
+.status strong{color:var(--fg)}
+.status .err{color:var(--bad)}
+.tools{display:flex;flex-wrap:wrap;gap:8px;margin-left:auto}
+.tools button,.tools label{height:30px;padding:0 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.tools button.primary{border-color:var(--accent);color:var(--accent)}
+.tools input[type=search]{height:30px;border:1px solid var(--line);border-radius:6px;padding:0 10px;background:var(--panel);width:180px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:12px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.tile b{display:block;font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+.tile span{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.tablewrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;min-width:1000px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle;white-space:nowrap}
+th{position:sticky;top:0;background:var(--panel);font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;z-index:1}
+th button{all:unset;cursor:pointer;display:inline-flex;gap:4px;align-items:center}
+th button.on{color:var(--fg)}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:13px}
+td.rank{color:var(--muted);width:48px}
+td.app{white-space:normal;min-width:280px;max-width:420px}
+.app{display:flex;gap:10px;align-items:center}
+.app img{width:40px;height:40px;border-radius:9px;flex:none;background:var(--line)}
+.app .t{font-weight:500}
+.app .d{color:var(--muted);font-size:12px}
+.app .s{color:var(--muted);font-size:12px;margin-top:2px;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+mark{background:var(--hit);color:inherit;border-radius:2px;padding:0 1px}
+.pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.pill.y{border-color:var(--good);color:var(--good)}
+.pill.s{border-color:var(--warn);color:var(--warn)}
+td.id{font-family:var(--mono);font-size:12px;color:var(--muted)}
+td.dim{color:var(--muted)}
+.empty{padding:40px 16px;text-align:center;color:var(--muted)}
+footer{color:var(--muted);font-size:12px;padding-block:14px;line-height:1.6}
+@media (max-width:760px){
+  form.bar{grid-template-columns:1fr 1fr}
+  form.bar input[name=term]{grid-column:1/-1}
+  form.bar button{grid-column:1/-1}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Play Keyword Explorer</h1>
+  <span class="sub">Top 250 Google Play search results for a keyword, in Google’s rank order.</span>
+</header>
+
+<form class="bar" id="f" autocomplete="off">
+  <input id="term" name="term" type="search" placeholder="Keyword, e.g. screen mirroring" required value="screen mirroring">
+  <select id="country" name="country" aria-label="Country">
+    <option value="us" selected>🇺🇸 United States</option>
+    <option value="gb">🇬🇧 United Kingdom</option>
+    <option value="ca">🇨🇦 Canada</option>
+    <option value="au">🇦🇺 Australia</option>
+    <option value="de">🇩🇪 Germany</option>
+    <option value="fr">🇫🇷 France</option>
+    <option value="in">🇮🇳 India</option>
+    <option value="pk">🇵🇰 Pakistan</option>
+    <option value="ae">🇦🇪 UAE</option>
+    <option value="sa">🇸🇦 Saudi Arabia</option>
+    <option value="br">🇧🇷 Brazil</option>
+    <option value="jp">🇯🇵 Japan</option>
+    <option value="kr">🇰🇷 South Korea</option>
+    <option value="mx">🇲🇽 Mexico</option>
+    <option value="es">🇪🇸 Spain</option>
+    <option value="it">🇮🇹 Italy</option>
+    <option value="tr">🇹🇷 Turkey</option>
+    <option value="id">🇮🇩 Indonesia</option>
+    <option value="ng">🇳🇬 Nigeria</option>
+    <option value="ph">🇵🇭 Philippines</option>
+  </select>
+  <select id="lang" name="lang" aria-label="Language">
+    <option value="en" selected>English</option>
+    <option value="de">Deutsch</option>
+    <option value="fr">Français</option>
+    <option value="es">Español</option>
+    <option value="pt">Português</option>
+    <option value="ja">日本語</option>
+    <option value="ko">한국어</option>
+    <option value="tr">Türkçe</option>
+    <option value="ar">العربية</option>
+    <option value="hi">हिन्दी</option>
+    <option value="id">Indonesia</option>
+  </select>
+  <button id="go" type="submit">Search</button>
+</form>
+
+<div class="status" id="status">
+  <span id="msg">Press Search to load results.</span>
+  <div class="tools" id="tools" hidden>
+    <input id="filter" type="search" placeholder="Filter rows (name, dev, package)">
+    <label><input id="onlyTitle" type="checkbox"> keyword in title only</label>
+    <button type="button" id="enrich" class="primary">Enrich top 30 (ratings count, updated date)</button>
+    <button type="button" id="csv">Download CSV</button>
+    <button type="button" id="copyIds">Copy package names</button>
+  </div>
+</div>
+
+<div class="tiles" id="tiles" hidden></div>
+
+<div class="tablewrap">
+<table id="tbl">
+  <thead><tr>
+    <th class="num">#</th>
+    <th>App</th>
+    <th><button data-k="inTitle" type="button">Keyword in title</button></th>
+    <th class="num"><button data-k="score" type="button">Rating</button></th>
+    <th class="num"><button data-k="minInstalls" type="button">Installs</button></th>
+    <th class="num"><button data-k="ratings" type="button">Ratings</button></th>
+    <th class="num"><button data-k="price" type="button">Price</button></th>
+    <th><button data-k="genre" type="button">Genre</button></th>
+    <th><button data-k="updated" type="button">Updated</button></th>
+    <th>Package</th>
+  </tr></thead>
+  <tbody id="rows"><tr><td colspan="10"><div class="empty">Enter a keyword and press Search. Results are the live top 200 for that country, in Google Play’s rank order.</div></td></tr></tbody>
+</table>
+</div>
+
+<footer>
+  Source: the Google Play Store app API (the same feed the Play app on a phone shows), read page by page by this site’s own backend until 250 apps are collected. Installs and ratings come straight from that feed; “Enrich” adds exact ratings counts and last-update dates from each app’s store page (30 at a time). If the app API is unavailable the tool falls back to Play web search, which only shows 30 results. Results are cached for 10 minutes.
+</footer>
+</div>
+
+<script>
+(function(){
+  const $=s=>document.querySelector(s);
+  const f=$('#f'), go=$('#go'), msg=$('#msg'), rows=$('#rows'), tools=$('#tools'), tiles=$('#tiles'), enrichBtn=$('#enrich');
+  let data=[], view=[], sortKey='rank', sortDir=1, kw='', enrichedTo=0;
+
+  const esc=s=>String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+  function hl(text){
+    if(!kw)return esc(text);
+    const words=kw.split(/\s+/).filter(Boolean).map(w=>w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
+    return words.length?esc(text).replace(new RegExp('('+words.join('|')+')','gi'),'<mark>$1</mark>'):esc(text);
+  }
+  function titleMatch(name){
+    const n=name.toLowerCase(), words=kw.toLowerCase().split(/\s+/).filter(Boolean);
+    if(!words.length)return 'n'; if(n.includes(kw.toLowerCase()))return 'y';
+    return words.every(w=>n.includes(w))?'s':'n';
+  }
+  const fmtN=n=>n==null||n===''?'':Number(n).toLocaleString('en-US');
+  const fmtInstalls=r=>r.installs||(r.minInstalls!=null?fmtN(r.minInstalls)+'+':'');
+
+  function normalize(results){
+    return results.map(r=>({
+      rank:r.rank, title:r.title||'', dev:r.developer||'', icon:r.icon||'', url:r.url||'', appId:r.appId||'',
+      score:r.score??null, price:r.price??null, priceText:r.free?'Free':(r.priceText||(r.price!=null?(r.currency||'')+' '+r.price:'')),
+      summary:r.summary||'', inTitle:titleMatch(r.title||''),
+      installs:r.installs||'', minInstalls:r.minInstalls??installsToNumber(r.installs), ratings:r.ratings??null, reviews:null,
+      updated:r.updated||'', genre:r.genre||'', version:r.version||'', released:'', contentRating:r.contentRating||'', adSupported:null, offersIAP:r.offersIAP||null
+    }));
+  }
+  function installsToNumber(s){
+    if(!s)return null; const m=String(s).replace(/,/g,'').match(/([\d.]+)\s*([KMB])?/i); if(!m)return null;
+    const mult={K:1e3,M:1e6,B:1e9}[(m[2]||'').toUpperCase()]||1; return Math.round(parseFloat(m[1])*mult);
+  }
+
+  function render(){
+    const q=$('#filter').value.trim().toLowerCase(), onlyT=$('#onlyTitle').checked;
+    view=data.filter(r=>(!q||(r.title+' '+r.dev+' '+r.appId).toLowerCase().includes(q))&&(!onlyT||r.inTitle!=='n'));
+    const order={y:0,s:1,n:2};
+    view.sort((a,b)=>{let x=a[sortKey],y=b[sortKey];
+      if(sortKey==='inTitle'){x=order[x];y=order[y]}
+      if(x==null||x==='')return 1;if(y==null||y==='')return -1;
+      if(typeof x==='string')return x.localeCompare(y)*sortDir;return (x-y)*sortDir;});
+    if(!view.length){rows.innerHTML='<tr><td colspan="10"><div class="empty">No rows match the filter.</div></td></tr>';return}
+    rows.innerHTML=view.map(r=>`<tr>
+      <td class="num rank">${r.rank}</td>
+      <td class="app"><div class="app"><img src="${esc(r.icon)}" alt="" loading="lazy"><div><div class="t"><a href="${esc(r.url)}" target="_blank" rel="noopener">${hl(r.title)}</a></div><div class="d">${esc(r.dev)}${r.version?' · v'+esc(r.version):''}</div><div class="s">${hl(r.summary)}</div></div></div></td>
+      <td>${r.inTitle==='y'?'<span class="pill y">exact</span>':r.inTitle==='s'?'<span class="pill s">all words</span>':'<span class="pill">no</span>'}</td>
+      <td class="num">${r.score!=null?Number(r.score).toFixed(1):''}</td>
+      <td class="num ${r.installs?'':'dim'}">${esc(fmtInstalls(r))||'—'}</td>
+      <td class="num ${r.ratings!=null?'':'dim'}">${r.ratings!=null?fmtN(r.ratings):'—'}</td>
+      <td class="num">${esc(r.priceText)}</td>
+      <td class="${r.genre?'':'dim'}">${esc(r.genre)||'—'}</td>
+      <td class="num ${r.updated?'':'dim'}">${r.updated||'—'}</td>
+      <td class="id">${esc(r.appId)}</td></tr>`).join('');
+  }
+
+  function renderTiles(){
+    const n=data.length; if(!n){tiles.hidden=true;return}
+    const exact=data.filter(r=>r.inTitle==='y').length, free=data.filter(r=>r.price===0).length;
+    const scored=data.filter(r=>r.score!=null).map(r=>r.score).sort((a,b)=>a-b);
+    const medScore=scored.length?scored[Math.floor(scored.length/2)].toFixed(1):'—';
+    const enr=data.filter(r=>r.minInstalls!=null);
+    const medInst=enr.length?fmtN(enr.map(r=>r.minInstalls).sort((a,b)=>a-b)[Math.floor(enr.length/2)])+'+':'—';
+    const six=new Date();six.setMonth(six.getMonth()-6);
+    const fresh=enr.length?enr.filter(r=>r.updated&&new Date(r.updated)>six).length+' / '+enr.length:'—';
+    tiles.innerHTML=[
+      ['Results',n],['Keyword in title',exact+' <small>('+Math.round(exact/n*100)+'%)</small>'],
+      ['Median rating',medScore],['Free apps',free],
+      ['Median installs (enriched)',medInst],['Updated last 6 mo (enriched)',fresh]
+    ].map(([l,v])=>`<div class="tile"><b>${v}</b><span>${l}</span></div>`).join('');
+    tiles.hidden=false;
+  }
+
+  async function run(){
+    const t=$('#term').value.trim(), c=$('#country').value, l=$('#lang').value;
+    if(!t)return; kw=t; go.disabled=true; enrichedTo=0;
+    msg.innerHTML='Loading top 250 for <strong>'+esc(t)+'</strong>… (10–30 s, Play serves pages of ~20)';
+    try{
+      let d=null, src='';
+      try{
+        const r=await fetch('/api/play?term='+encodeURIComponent(t)+'&num=250&locale='+l+'_'+c.toUpperCase());
+        const j=await r.json(); if(r.ok&&!j.error&&(j.results||[]).length) {d=j; src='Play Store API · '+j.pagesFetched+' pages';}
+        else throw new Error(j.error||('HTTP '+r.status));
+      }catch(e1){
+        const r=await fetch('/api/search?term='+encodeURIComponent(t)+'&country='+c+'&lang='+l+'&num=200');
+        const j=await r.json(); if(!r.ok||j.error)throw new Error(j.error||('HTTP '+r.status));
+        d=j; src='web search fallback (Play web shows only 30) — API error: '+e1.message;
+      }
+      data=normalize(d.results||[]);
+      msg.innerHTML='<strong>'+data.length+'</strong> results for <strong>'+esc(t)+'</strong> · '+c.toUpperCase()+' · '+l+' · '+esc(src)+' · '+new Date(d.fetchedAt).toLocaleTimeString();
+      tools.hidden=!data.length; enrichBtn.textContent='Enrich top 30 (ratings count, updated date)'; renderTiles(); render();
+      try{history.replaceState(null,'','#'+encodeURIComponent(t))}catch(x){}
+    }catch(err){
+      msg.innerHTML='<span class="err">'+esc(err.message)+'</span> Try again in a minute.';
+    }finally{go.disabled=false}
+  }
+
+  async function enrich(){
+    const batch=data.slice(enrichedTo,enrichedTo+30); if(!batch.length)return;
+    enrichBtn.disabled=true; const c=$('#country').value, l=$('#lang').value;
+    for(let i=0;i<batch.length;i+=10){
+      const chunk=batch.slice(i,i+10);
+      msg.textContent='Enriching apps '+(enrichedTo+i+1)+'–'+(enrichedTo+i+chunk.length)+'…';
+      try{
+        const r=await fetch('/api/details?ids='+encodeURIComponent(chunk.map(a=>a.appId).join(','))+'&country='+c+'&lang='+l);
+        const d=await r.json();
+        chunk.forEach(a=>{const x=d[a.appId];if(x&&!x.error)Object.assign(a,{installs:x.installs,minInstalls:x.minInstalls,ratings:x.ratings,reviews:x.reviews,updated:x.updated,genre:x.genre,version:x.version,released:x.released,contentRating:x.contentRating,adSupported:x.adSupported,offersIAP:x.offersIAP,score:x.score??a.score});});
+      }catch(e){}
+      renderTiles(); render();
+    }
+    enrichedTo+=batch.length;
+    msg.textContent='Enriched '+enrichedTo+' of '+data.length+' apps.';
+    enrichBtn.textContent=enrichedTo<data.length?'Enrich next 30 ('+enrichedTo+'/'+data.length+' done)':'All apps enriched';
+    enrichBtn.disabled=enrichedTo>=data.length;
+  }
+
+  f.addEventListener('submit',ev=>{ev.preventDefault();run()});
+  $('#filter').addEventListener('input',render);
+  $('#onlyTitle').addEventListener('change',render);
+  enrichBtn.addEventListener('click',enrich);
+  document.querySelectorAll('th button').forEach(b=>b.addEventListener('click',()=>{
+    const k=b.dataset.k; if(sortKey===k)sortDir*=-1;else{sortKey=k;sortDir=['ratings','score','updated','minInstalls'].includes(k)?-1:1}
+    document.querySelectorAll('th button').forEach(x=>x.classList.toggle('on',x===b)); render();
+  }));
+  $('#csv').addEventListener('click',()=>{
+    const cols=['rank','title','dev','inTitle','score','installs','minInstalls','ratings','reviews','priceText','genre','updated','released','version','contentRating','adSupported','offersIAP','appId','url','summary'];
+    const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
+    const csv=[cols.join(',')].concat(view.map(r=>cols.map(c=>q(r[c])).join(','))).join('\n');
+    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    a.download=kw.replace(/\s+/g,'-')+'-'+$('#country').value+'-play-top200.csv';a.click();
+  });
+  $('#copyIds').addEventListener('click',async()=>{
+    const txt=view.map(r=>r.appId).join('\n');
+    try{await navigator.clipboard.writeText(txt);msg.textContent='Copied '+view.length+' package names.'}catch(e){window.prompt('Copy package names:',txt)}
+  });
+
+  const h=decodeURIComponent(location.hash.slice(1)); if(h){$('#term').value=h}
+  run();
+})();
+</script>
+</body>
+</html>
