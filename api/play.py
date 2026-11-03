@@ -24,7 +24,9 @@ def _get_api(locale, force=False):
     now = time.time()
     if not force and _API["obj"] is not None and _API["locale"] == locale and now - _API["ts"] < _TOKEN_TTL:
         return _API["obj"]
-    api = GooglePlayAPI(locale=locale, timezone="America/New_York")
+    api = GooglePlayAPI(locale=locale, timezone="America/New_York",
+                        device_codename=os.environ.get("PLAYSTORE_DEVICE", "op_8_pro"))
+    _localize_device(api, locale)
     gsf = os.environ.get("PLAYSTORE_GSFID")
     tok = os.environ.get("PLAYSTORE_TOKEN")
     if gsf and tok:
@@ -33,6 +35,34 @@ def _get_api(locale, force=False):
         _anon_login(api)
     _API.update(obj=api, locale=locale, ts=now)
     return api
+
+
+# MCC+MNC of a big carrier per country: Play uses the SIM/cell operator (X-DFE-MCCMNC)
+# to pick the storefront, so a Mexican default SIM would return Mexican rankings.
+OPERATORS = {"US": "310260", "GB": "23410", "CA": "302720", "AU": "50501", "DE": "26201", "FR": "20801",
+             "IN": "40445", "PK": "41001", "AE": "42402", "SA": "42001", "BR": "72405", "JP": "44010",
+             "KR": "45005", "MX": "334020", "ES": "21407", "IT": "22210", "TR": "28601", "ID": "51010",
+             "NG": "62130", "PH": "51502"}
+TIMEZONES = {"US": "America/New_York", "GB": "Europe/London", "CA": "America/Toronto", "AU": "Australia/Sydney",
+             "DE": "Europe/Berlin", "FR": "Europe/Paris", "IN": "Asia/Kolkata", "PK": "Asia/Karachi",
+             "AE": "Asia/Dubai", "SA": "Asia/Riyadh", "BR": "America/Sao_Paulo", "JP": "Asia/Tokyo",
+             "KR": "Asia/Seoul", "MX": "America/Mexico_City", "ES": "Europe/Madrid", "IT": "Europe/Rome",
+             "TR": "Europe/Istanbul", "ID": "Asia/Jakarta", "NG": "Africa/Lagos", "PH": "Asia/Manila"}
+
+
+def _localize_device(api, locale):
+    country = (locale.split("_")[-1] if "_" in locale else "US").upper()
+    op = OPERATORS.get(country, OPERATORS["US"])
+    tz = TIMEZONES.get(country, "America/New_York")
+    d = api.deviceBuilder.device
+    d["celloperator"] = op
+    d["simoperator"] = op
+    d["timezone"] = tz
+    api.deviceBuilder.setTimezone(tz)
+    cp = api.deviceBuilder.device_case_preserved
+    cp["CellOperator"] = op
+    cp["SimOperator"] = op
+    cp["TimeZone"] = tz
 
 
 DISPENSERS = [d for d in [os.environ.get("PLAYSTORE_DISPENSER_URL"),
