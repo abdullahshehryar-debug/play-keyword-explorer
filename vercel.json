@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/*.js": { "maxDuration": 60 },
+    "api/*.py": { "maxDuration": 60 }
+  },
+  "headers": [{ "source": "/api/(.*)", "headers": [{ "key": "Cache-Control", "value": "s-maxage=600, stale-while-revalidate=1800" }] }]
+}

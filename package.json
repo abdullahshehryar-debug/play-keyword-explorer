@@ -1,0 +1,11 @@
+{
+  "name": "play-keyword-explorer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Keyword → top 200 Google Play search results, live.",
+  "dependencies": {
+    "google-play-scraper": "10.1.4"
+  },
+  "engines": { "node": ">=18" }
+}

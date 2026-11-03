@@ -1,0 +1,4 @@
+playstoreapi==0.5.8
+protobuf==3.20.3
+requests>=2.31
+cryptography>=41
