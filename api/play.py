@@ -278,10 +278,10 @@ def _web_order_direct(term, locale):
             return []
         html = r.text
         WEB_NOTE["note"] = "direct-len:" + str(len(html))
-        m = re.search(r"AF_initDataCallback\(\{key: 'ds:4'.*?data:(.*?), sideChannel:", html, re.S)
-        blob = m.group(1) if m else html
+        # Links appear in the HTML in the same order the page displays them
+        # (verified against the rendered DOM), so scan the whole document.
         seen, order = set(), []
-        for pkg in re.findall(r"/store/apps/details\?id=([A-Za-z0-9_.]+)", blob):
+        for pkg in re.findall(r"/store/apps/details\?id=([A-Za-z0-9_.]+)", html):
             if pkg not in seen:
                 seen.add(pkg)
                 order.append(pkg)
