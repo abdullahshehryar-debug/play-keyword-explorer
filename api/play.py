@@ -145,11 +145,22 @@ def _norm(item, app):
     }
 
 
-def run_search(term, num, locale, debug=False):
+def _first_page(api, term, qs):
+    """First search call; `qs` is an optional raw query-string suffix (e.g. 'n=250')."""
+    import requests as _rq
+    from playstoreapi.googleplay import URL_SEARCH
+    from playstoreapi import utils as _u
+    path = URL_SEARCH + "?c=3&q=" + _rq.utils.quote(term) + (("&" + qs) if qs else "")
+    data = api.executeRequestApi2(path)
+    resp = data.preFetch[0].response if _u.hasPrefetch(data) else data
+    return list(map(_u.parseProtobufObj, resp.payload.listResponse.item))
+
+
+def run_search(term, num, locale, debug=False, qs=""):
     api = _get_api(locale)
     out, seen, raw_pages = [], set(), 0
     next_urls = []
-    pages = api.search(term)
+    pages = _first_page(api, term, qs)
     raw_first = pages
     _walk(pages, out, seen, next_urls)
     raw_pages += 1
@@ -204,8 +215,11 @@ class handler(BaseHTTPRequestHandler):
         if not all(ch.isalnum() or ch == "_" for ch in locale) or len(locale) > 6:
             locale = "en_US"
         debug = q.get("debug", ["0"])[0] == "1"
+        qs = q.get("qs", [""])[0]
+        if not all(ch.isalnum() or ch in "=&_" for ch in qs) or len(qs) > 60:
+            qs = ""
         try:
-            self._send(200, run_search(term, num, locale, debug))
+            self._send(200, run_search(term, num, locale, debug, qs))
         except Exception as e:
             _API["obj"] = None  # force re-login next time
             self._send(502, {"error": "Play Store API failed: " + str(e),
